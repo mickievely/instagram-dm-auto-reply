@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node bot.js",
     "dev": "node bot.js",
-    "extract": "node extractDMs.js"
+    "extract": "node extractDMs.js",
+    "init-env": "node -e \"const f=require('fs');if(f.existsSync('.env')){console.log('.env already exists');process.exit(0);}f.copyFileSync('.env.example','.env');console.log('.env created');\""
   },
   "keywords": [
     "instagram",
