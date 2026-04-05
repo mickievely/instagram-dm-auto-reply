@@ -1,0 +1,25 @@
+{
+  "name": "instagram-dm-auto-responder",
+  "version": "1.0.0",
+  "description": "Instagram DM 자동 응답 봇",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "node bot.js",
+    "extract": "node extractDMs.js"
+  },
+  "keywords": [
+    "instagram",
+    "dm",
+    "auto-responder",
+    "bot"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "instagram-private-api": "^1.45.3",
+    "re2": "^1.19.1",
+    "dotenv": "^16.3.1"
+  }
+}
+
