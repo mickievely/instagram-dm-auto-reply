@@ -5,121 +5,119 @@ const path = require("path");
 const readline = require("readline");
 
 const downloadedFile = path.join(__dirname, "downloaded_dm.json");
-let downloadedMessages = new Set();
 
-function loadDownloadedMessages() {
+function loadDownloadedSet() {
   try {
-    const data = fs.readFileSync(downloadedFile, "utf8");
-    downloadedMessages = new Set(JSON.parse(data));
+    return new Set(JSON.parse(fs.readFileSync(downloadedFile, "utf8")));
   } catch {
-    downloadedMessages = new Set();
+    return new Set();
   }
 }
 
-function saveDownloadedMessages() {
-  fs.writeFileSync(downloadedFile, JSON.stringify(Array.from(downloadedMessages)), "utf8");
+function saveDownloadedSet(set) {
+  fs.writeFileSync(downloadedFile, JSON.stringify([...set]), "utf8");
+}
+
+function pickDmMedia(msg) {
+  if (msg.item_type === "raven_media") {
+    const media = msg.visual_media?.media;
+    if (!media) return null;
+    if (media.video_versions?.length) {
+      return { url: media.video_versions[0].url, ext: "mp4", tag: "dm_raven" };
+    }
+    const c = media.image_versions2?.candidates;
+    if (c?.length) {
+      return { url: c[0].url, ext: "jpg", tag: "dm_raven" };
+    }
+    return null;
+  }
+  if (msg.item_type === "media") {
+    const m = msg.image_versions2?.candidates?.[0] || msg.video_versions?.[0];
+    if (!m?.url) return null;
+    return {
+      url: m.url,
+      ext: m.url.endsWith(".mp4") ? "mp4" : "jpg",
+      tag: "dm_media"
+    };
+  }
+  return null;
 }
 
 async function downloadMedia(url, filename) {
   const res = await fetch(url);
-  const buffer = await res.arrayBuffer();
-  fs.writeFileSync(filename, Buffer.from(buffer));
+  if (!res.ok) throw new Error(String(res.status));
+  fs.writeFileSync(filename, Buffer.from(await res.arrayBuffer()));
   console.log(`[✅] 저장 완료: ${filename}`);
 }
 
-async function ask(question) {
+function ask(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise(resolve => rl.question(question, ans => {
-    rl.close();
-    resolve(ans);
-  }));
+  return new Promise((resolve) => {
+    rl.question(question, (ans) => {
+      rl.close();
+      resolve(ans);
+    });
+  });
 }
 
 (async () => {
-  const ig = new IgApiClient();
-
-  const username = config.username;
-  const password = config.password;
+  const { username, password } = config;
   if (!username || !password) {
     console.error(".env에 IG_USERNAME, IG_PASSWORD를 설정하세요. (.env.example 참고)");
     process.exit(1);
   }
 
+  const ig = new IgApiClient();
   ig.state.generateDevice(username);
   await ig.account.login(username, password);
   console.log(`[+] 로그인 성공: ${username}`);
 
-  const targetUsername = await ask("📩 저장할 상대방 인스타 아이디 입력: ");
-  const user = await ig.user.searchExact(targetUsername);
-  const userId = user.pk;
-  console.log(`[+] ${targetUsername} (ID: ${userId}) DM 검색 중...`);
+  const targetRaw = (await ask("📩 저장할 상대방 인스타 아이디 입력: ")).trim();
+  if (!targetRaw) {
+    console.log("[!] 아이디가 비었습니다.");
+    return;
+  }
 
-  const inboxFeed = ig.feed.directInbox();
-  const threads = await inboxFeed.items();
+  const searchUser = await ig.user.searchExact(targetRaw);
+  const userId = searchUser.pk;
+  console.log(`[+] ${targetRaw} (ID: ${userId}) DM 검색 중...`);
 
-  let targetThread = threads.find(t => t.users.some(u => u.pk === userId));
+  const threads = await ig.feed.directInbox().items();
+  const targetThread = threads.find((t) => t.users?.some((u) => u.pk === userId));
   if (!targetThread) {
     console.log("[!] 해당 사용자와의 DM 스레드를 찾을 수 없습니다.");
     return;
   }
-  console.log(`[+] 대화내용을 찾음: ${targetThread.thread_id}`);
 
-  const threadFeed = ig.feed.directThread({ thread_id: targetThread.thread_id });
-  const threadItems = await threadFeed.items();
+  const threadId = targetThread.thread_id;
+  console.log(`[+] 대화내용을 찾음: ${threadId}`);
 
-  let saveDir = path.join(__dirname, "downloads", targetUsername);
+  const threadItems = await ig.feed.directThread({ thread_id: threadId }).items();
+
+  const folderName = path.basename(targetRaw) || "dm";
+  let saveDir = path.join(__dirname, "downloads", folderName);
   try {
-    if (!fs.existsSync(saveDir)) {
-      fs.mkdirSync(saveDir, { recursive: true });
-      console.log(`[+] 저장 폴더 생성: ${saveDir}`);
-    }
-  } catch (error) {
-    console.error(`[!] 폴더 생성 실패: ${error.message}`);
-    console.log(`[!] 대신 현재 디렉토리에 저장합니다.`);
+    fs.mkdirSync(saveDir, { recursive: true });
+  } catch (err) {
+    console.error(`[!] 폴더 생성 실패: ${err.message}`);
+    console.log("[!] 대신 현재 디렉토리에 저장합니다.");
     saveDir = __dirname;
   }
 
-  loadDownloadedMessages();
+  const downloaded = loadDownloadedSet();
   let downloadedCount = 0;
 
   for (const msg of threadItems) {
-    if (downloadedMessages.has(msg.item_id)) continue;
-
-    let url, ext;
-
-    if (msg.item_type === "raven_media") {
-      const media = msg.visual_media?.media;
-      if (!media) continue;
-
-      if (media?.video_versions?.length) {
-        url = media.video_versions[0].url;
-        ext = "mp4";
-      } else if (media?.image_versions2?.candidates?.length) {
-        url = media.image_versions2.candidates[0].url;
-        ext = "jpg";
-      } else continue;
-
-      const filename = path.join(saveDir, `dm_raven_${msg.item_id}_${Date.now()}.${ext}`);
-      await downloadMedia(url, filename);
-      downloadedMessages.add(msg.item_id);
-      downloadedCount++;
-    }
-
-    else if (msg.item_type === "media") {
-      const media = msg.image_versions2?.candidates?.[0] || msg.video_versions?.[0];
-      if (!media?.url) continue;
-
-      ext = media.url.endsWith(".mp4") ? "mp4" : "jpg";
-      url = media.url;
-
-      const filename = path.join(saveDir, `dm_media_${msg.item_id}_${Date.now()}.${ext}`);
-      await downloadMedia(url, filename);
-      downloadedMessages.add(msg.item_id);
-      downloadedCount++;
-    }
+    const id = msg.item_id;
+    if (id == null || downloaded.has(id)) continue;
+    const picked = pickDmMedia(msg);
+    if (!picked) continue;
+    await downloadMedia(picked.url, path.join(saveDir, `${picked.tag}_${id}_${Date.now()}.${picked.ext}`));
+    downloaded.add(id);
+    downloadedCount++;
   }
 
-  saveDownloadedMessages();
+  saveDownloadedSet(downloaded);
 
   if (downloadedCount === 0) {
     console.log("[ℹ] 저장할 새로운 사진/영상 메시지가 없습니다.");
