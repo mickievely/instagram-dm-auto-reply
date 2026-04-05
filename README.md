@@ -11,8 +11,8 @@ Instagram 비공식 API(`instagram-private-api`)와 Google Gemini를 사용해 D
 ## 설치
 
 ```bash
-git clone <저장소 URL>
-cd <프로젝트 폴더>
+git clone https://github.com/mickievely/instagram-dm-auto-reply.git
+cd instagram-dm-auto-reply
 npm install
 ```
 
