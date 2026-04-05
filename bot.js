@@ -5,6 +5,13 @@ const { IgApiClient } = require('instagram-private-api');
 const { IgLoginRequiredError, IgCheckpointError, IgResponseError } = require('instagram-private-api/dist/errors');
 const https = require('https');
 
+const IG_DEVICE_PRESETS = {
+  samsung_s10: '26/8.0.0; 420dpi; 1080x2094; samsung; SM-G965F; star2lte; samsungexynos9810',
+  samsung_s9: '26/8.0.0; 480dpi; 1080x2076; samsung; SM-G960F; starlte; samsungexynos9810',
+  huawei_p20_lite: '26/8.0.0; 480dpi; 1080x2150; HUAWEI; ANE-LX1; HWANE; hi6250',
+  redmi_note5: '27/8.1.0; 440dpi; 1080x2030; Xiaomi/xiaomi; Redmi Note 5; whyred; qcom'
+};
+
 class InstagramAutoResponder {
   constructor() {
     this.ig = new IgApiClient();
@@ -66,27 +73,40 @@ class InstagramAutoResponder {
     
     this.isBlocked = false;
     this.blockedUntil = null;
-    
-    this.userAgents = [
-      'Instagram 123.0.0.21.114 (iPhone11,8; iOS 13_3; en_US; en-US; scale=2.00; 828x1792) AppleWebKit/605.1.15',
-      'Instagram 123.0.0.21.114 (iPhone12,1; iOS 14_0; en_US; en-US; scale=2.00; 1170x2532) AppleWebKit/605.1.15',
-      'Instagram 123.0.0.21.114 (iPhone13,2; iOS 15_0; en_US; en-US; scale=3.00; 1284x2778) AppleWebKit/605.1.15',
-      'Instagram 123.0.0.21.114 (SM-G973F; Android 11; en_US; en-US; scale=2.75; 1080x2400)',
-      'Instagram 123.0.0.21.114 (Pixel 5; Android 12; en_US; en-US; scale=2.75; 1080x2340)',
-    ];
-    
-    this.setupRequestInterceptor();
   }
-  
-  setupRequestInterceptor() {
-    try {
-      this.ig.request.end$.subscribe((req) => {
-        if (req && req.headers) {
-          const randomUA = this.userAgents[Math.floor(Math.random() * this.userAgents.length)];
-          req.headers['user-agent'] = randomUA;
-        }
-      });
-    } catch (error) {
+
+  resolveIgDeviceString() {
+    const custom = config.igDeviceString;
+    if (custom && custom.includes(';')) {
+      return custom;
+    }
+    const preset = config.igDevicePreset;
+    if (preset && IG_DEVICE_PRESETS[preset]) {
+      return IG_DEVICE_PRESETS[preset];
+    }
+    return null;
+  }
+
+  applyIgMobileProfile(options = {}) {
+    const deviceOverride = options.deviceOverride === true;
+    this.ig.state.language = config.igLocale || 'ko_KR';
+    const conn = (config.igConnection || 'WIFI').toUpperCase();
+    if (conn === 'LTE' || conn === 'CELLULAR' || conn === 'MOBILE' || conn === '4G' || conn === '5G') {
+      this.ig.state.connectionTypeHeader = 'LTE';
+      this.ig.state.radioType = 'lte';
+    } else {
+      this.ig.state.connectionTypeHeader = 'WIFI';
+      this.ig.state.radioType = 'wifi-none';
+    }
+    const tz = config.igTimezoneOffsetSec;
+    if (tz !== null && tz !== undefined) {
+      this.ig.state.timezoneOffset = String(tz);
+    }
+    if (deviceOverride) {
+      const ds = this.resolveIgDeviceString();
+      if (ds) {
+        this.ig.state.deviceString = ds;
+      }
     }
   }
 
@@ -111,6 +131,7 @@ class InstagramAutoResponder {
         }
         
         await this.ig.state.deserialize(sessionData);
+        this.applyIgMobileProfile({ deviceOverride: false });
         console.log('📂 저장된 세션 불러오기 완료');
         return true;
       }
@@ -144,6 +165,7 @@ class InstagramAutoResponder {
       }
 
       this.ig.state.generateDevice(username);
+      this.applyIgMobileProfile({ deviceOverride: true });
       
       try {
         await this.ig.simulate.preLoginFlow();
